@@ -1,0 +1,28 @@
+.ac-row {
+  cursor: pointer;
+  padding: 2px 0;
+}
+
+.ac-row:hover {
+  opacity: 0.85;
+}
+
+.ac-row code {
+  font-size: 1em;
+}
+
+.ac-del {
+  margin-left: auto;
+  font-size: 0.8em;
+}
+
+.ac-add-row {
+  margin-top: 6px;
+  align-items: center;
+}
+
+.ac-char-input {
+  width: 2.5em !important;
+  text-align: center;
+  padding: 2px 4px !important;
+}
