@@ -1,8 +1,8 @@
 {
   "display_name": "Auto-Closer",
   "loading_order": 10,
-  "version": "1.0.0",
-  "js": "index.js",
+  "version": "1.0.1",
+  "js": "index_1_0_1.js",
   "css": "style.css",
   "author": "nutho",
   "homePage": "",

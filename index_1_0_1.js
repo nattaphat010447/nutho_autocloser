@@ -105,8 +105,39 @@ function escHtml(s) {
 function onBeforeInput(e) {
   const ta = e.target;
   if (ta.id !== 'send_textarea') return;
+  if (e.isComposing) return; // don't intercept while an IME candidate is being composed
 
   const { selectionStart: ss, selectionEnd: se, value } = ta;
+
+  // Enter/new line will hop the cursor past any trailing closer(s) first,
+  // so the newline lands outside the pair instead of inside it.
+  // Some mobile keyboards (notably iOS Safari + certain third-party keyboards)
+  // don't fire 'insertLineBreak' and instead fire 'insertText' with data === '\n'.
+  const isLineBreak = e.inputType === 'insertLineBreak' ||
+    (e.inputType === 'insertText' && e.data === '\n');
+  if (isLineBreak && ss === se) {
+    let pos = ss;
+    let advanced = true;
+    while (advanced) {
+      advanced = false;
+      for (const p of pairs) {
+        if (!p[2]) continue;
+        const close = p[1];
+        if (value.startsWith(close, pos)) {
+          pos += close.length;
+          advanced = true;
+          break;
+        }
+      }
+    }
+    if (pos !== ss) {
+      e.preventDefault();
+      const newVal = value.slice(0, pos) + '\n' + value.slice(pos);
+      setNativeValue(ta, newVal);
+      ta.selectionStart = ta.selectionEnd = pos + 1;
+    }
+    return;
+  }
 
   // Backspace: delete empty pair
   if (e.inputType === 'deleteContentBackward' && ss === se && ss > 0) {
