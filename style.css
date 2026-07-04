@@ -21,6 +21,21 @@
   align-items: center;
 }
 
+.ac-hold-key {
+  align-items: center;
+  margin: 4px 0;
+}
+
+#ac-hold-key {
+  width: auto !important;
+}
+
+.ac-note {
+  display: block;
+  opacity: 0.65;
+  margin-bottom: 4px;
+}
+
 .ac-char-input {
   width: 2.5em !important;
   text-align: center;
