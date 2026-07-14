@@ -17,25 +17,47 @@ const DEFAULT_PAIRS = [
   ['`',      '`',      false, false],  // backtick
 ];
 
+const HOLD_KEYS = {
+  rshift: 'Right Shift',
+  lshift: 'Left Shift',
+  shift:  'Either Shift',
+  caps:   'Caps Lock (held)',
+  ctrl:   'Ctrl',
+  alt:    'Alt',
+};
+
 let pairs = [];
+let holdEnabled = false;   // hold a key to insert a single char (no auto-close)
+let holdKey = 'rshift';
+let pairBackspace = true;  // Backspace inside an empty pair deletes both
 
 function loadSettings() {
+  pairs = DEFAULT_PAIRS.map(p => [...p]);
   try {
     const saved = JSON.parse(localStorage.getItem(EXT_KEY) || 'null');
-    if (!saved) { pairs = DEFAULT_PAIRS.map(p => [...p]); return; }
-    // Merge defaults (preserve user toggle) + restore custom pairs
-    pairs = DEFAULT_PAIRS.map(([o, c, def]) => {
-      const found = saved.find(p => p[0] === o && !p[3]);
-      return [o, c, found ? found[2] : def, false];
-    });
-    saved.filter(p => p[3]).forEach(p => pairs.push([p[0], p[1], p[2], true]));
+    if (!saved) return;
+    // ≤1.0.1 stored a bare pairs array; 1.1.0+ wraps it in an object
+    const savedPairs = Array.isArray(saved) ? saved : saved.pairs;
+    if (Array.isArray(savedPairs)) {
+      // Merge defaults (preserve user toggle) + restore custom pairs
+      pairs = DEFAULT_PAIRS.map(([o, c, def]) => {
+        const found = savedPairs.find(p => p[0] === o && !p[3]);
+        return [o, c, found ? found[2] : def, false];
+      });
+      savedPairs.filter(p => p[3]).forEach(p => pairs.push([p[0], p[1], p[2], true]));
+    }
+    if (!Array.isArray(saved)) {
+      if (typeof saved.holdEnabled === 'boolean') holdEnabled = saved.holdEnabled;
+      if (saved.holdKey in HOLD_KEYS) holdKey = saved.holdKey;
+      if (typeof saved.pairBackspace === 'boolean') pairBackspace = saved.pairBackspace;
+    }
   } catch {
     pairs = DEFAULT_PAIRS.map(p => [...p]);
   }
 }
 
 function saveSettings() {
-  localStorage.setItem(EXT_KEY, JSON.stringify(pairs));
+  localStorage.setItem(EXT_KEY, JSON.stringify({ pairs, holdEnabled, holdKey, pairBackspace }));
 }
 
 /* ── Settings UI ── */
@@ -48,16 +70,47 @@ function buildSettings() {
       <strong>Auto-Closer</strong>
       <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down interactable" tabindex="0" role="button"></div>
     </div>
-    <div class="inline-drawer-content" id="ac-drawer-content"></div>`;
+    <div class="inline-drawer-content" id="ac-drawer-content">
+      <div id="ac-options"></div>
+      <hr>
+      <div id="ac-pair-list"></div>
+    </div>`;
 
-  renderPairRows(wrap.querySelector('#ac-drawer-content'));
+  renderOptions(wrap.querySelector('#ac-options'));
+  renderPairRows(wrap.querySelector('#ac-pair-list'));
 
   const $settings = $('#extensions_settings');
   if ($settings.length) $settings.append(wrap);
 }
 
+function renderOptions(el) {
+  el.innerHTML = `
+    <label class="ac-row flex-container">
+      <input type="checkbox" id="ac-hold-toggle" ${holdEnabled ? 'checked' : ''}>
+      <span>Hold a key to insert a single character (no auto-close)</span>
+    </label>
+    <div class="ac-hold-key flex-container flexGap5">
+      <span>Hold key:</span>
+      <select id="ac-hold-key" class="text_pole">
+        ${Object.entries(HOLD_KEYS).map(([v, l]) => `<option value="${v}" ${v === holdKey ? 'selected' : ''}>${l}</option>`).join('')}
+      </select>
+    </div>
+    <small class="ac-note">
+      Shift options only matter for characters that already need Shift (like ").
+      Ctrl, Alt, or a held Caps Lock work for any character — but each Caps Lock
+      press also flips its lock state.
+    </small>
+    <label class="ac-row flex-container">
+      <input type="checkbox" id="ac-bksp-toggle" ${pairBackspace ? 'checked' : ''}>
+      <span>Backspace inside an empty pair deletes both</span>
+    </label>`;
+  el.querySelector('#ac-hold-toggle').addEventListener('change', e => { holdEnabled = e.target.checked; saveSettings(); });
+  el.querySelector('#ac-hold-key').addEventListener('change', e => { holdKey = e.target.value; saveSettings(); });
+  el.querySelector('#ac-bksp-toggle').addEventListener('change', e => { pairBackspace = e.target.checked; saveSettings(); });
+}
+
 function renderPairRows(content) {
-  if (!content) content = document.querySelector('#ac-drawer-content');
+  if (!content) content = document.querySelector('#ac-pair-list');
   if (!content) return;
   content.innerHTML = '';
 
@@ -101,6 +154,44 @@ function escHtml(s) {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+/* ── Hold-to-single: bypass key tracking ── */
+// beforeinput events carry no modifier info, so key state is tracked on
+// keydown/keyup. Left/right Shift are told apart by e.code so e.g. Right
+// Shift can insert a single " while Left Shift still types a normal pair.
+const held = { lshift: false, rshift: false, shift: false, caps: false, ctrl: false, alt: false };
+
+function trackKeys(e) {
+  const down = e.type === 'keydown';
+  if (e.code === 'ShiftLeft') held.lshift = down;
+  else if (e.code === 'ShiftRight') held.rshift = down;
+  else if (e.code === 'CapsLock') held.caps = down;
+  held.shift = e.shiftKey;
+  held.ctrl = e.ctrlKey;
+  held.alt = e.altKey;
+  if (!e.shiftKey) held.lshift = held.rshift = false; // recover from missed keyups
+}
+
+function holdActive() {
+  if (!holdEnabled) return false;
+  return { rshift: held.rshift, lshift: held.lshift, shift: held.shift, caps: held.caps }[holdKey] || false;
+}
+
+// Ctrl/Alt suppress regular text input in the browser, so those hold keys
+// insert the literal character straight from the keydown instead.
+function onKeydownHold(e) {
+  trackKeys(e);
+  if (!holdEnabled || (holdKey !== 'ctrl' && holdKey !== 'alt')) return;
+  const ta = e.target;
+  if (!ta || ta.id !== 'send_textarea' || e.isComposing) return;
+  if (e.key.length !== 1 || e.metaKey) return;
+  if (holdKey === 'ctrl' ? (!e.ctrlKey || e.altKey) : (!e.altKey || e.ctrlKey)) return; // AltGr reports Ctrl+Alt — leave it alone
+  if (!pairs.some(p => p[2] && (p[0] === e.key || p[1] === e.key))) return;
+  e.preventDefault();
+  const { selectionStart: ss, selectionEnd: se, value } = ta;
+  setNativeValue(ta, value.slice(0, ss) + e.key + value.slice(se));
+  ta.selectionStart = ta.selectionEnd = ss + 1;
+}
+
 /* ── Core handler ── */
 function onBeforeInput(e) {
   const ta = e.target;
@@ -139,8 +230,8 @@ function onBeforeInput(e) {
     return;
   }
 
-  // Backspace: delete empty pair
-  if (e.inputType === 'deleteContentBackward' && ss === se && ss > 0) {
+  // Backspace: delete empty pair (optional — some prefer plain deletes)
+  if (pairBackspace && e.inputType === 'deleteContentBackward' && ss === se && ss > 0) {
     const prev = value[ss - 1], next = value[ss];
     if (pairs.some(p => p[2] && p[0] === prev && p[1] === next)) {
       e.preventDefault();
@@ -154,6 +245,9 @@ function onBeforeInput(e) {
   if (e.inputType !== 'insertText' || !e.data) return;
 
   const ch = e.data;
+
+  // Hold-to-single: bypass key is held — let the character type plainly
+  if (holdActive()) return;
 
   // Skip-over: close char of asymmetric pair typed over existing close char
   const closePair = pairs.find(p => p[2] && p[0] !== p[1] && p[1] === ch);
@@ -200,6 +294,9 @@ function setNativeValue(el, value) {
 jQuery(async () => {
   loadSettings();
   buildSettings();
+  document.addEventListener('keydown', onKeydownHold, true);
+  document.addEventListener('keyup', trackKeys, true);
+  window.addEventListener('blur', () => Object.keys(held).forEach(k => held[k] = false));
   document.addEventListener('beforeinput', onBeforeInput, true);
   console.log('[Auto-Closer] loaded ✓');
 });
