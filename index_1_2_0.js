@@ -7,8 +7,8 @@ const EXT_KEY = 'nutho_autocloser';
 // Pairs: [open, close, enabled, isCustom]
 const DEFAULT_PAIRS = [
   ['"',      '"',      true,  false],  // straight quote U+0022
-  ['\u201C', '\u201D', true, false],  // "…" iPhone smart double quotes
-  ['\uFF02', '\uFF02', true, false],  // ＂…＂ fullwidth quote
+  ['\u201C', '\u201D', true, false],  // \u201C…\u201D iPhone smart double quotes
+  ['\uFF02', '\uFF02', true, false],  // \uFF02…\uFF02 fullwidth quote
   ['*',      '*',      true,  false],  // asterisk
   ['(',      ')',      true,  false],  // parentheses
   ['[',      ']',      true,  false],  // brackets
@@ -30,6 +30,14 @@ let pairs = [];
 let holdEnabled = false;   // hold a key to insert a single char (no auto-close)
 let holdKey = 'rshift';
 let pairBackspace = true;  // Backspace inside an empty pair deletes both
+let editTarget = true;     // also apply in the AI message edit textarea
+
+/** Returns the Set of textarea IDs the extension should act on. */
+function getTargets() {
+  const ids = new Set(['send_textarea']);
+  if (editTarget) ids.add('curEditTextarea');
+  return ids;
+}
 
 function loadSettings() {
   pairs = DEFAULT_PAIRS.map(p => [...p]);
@@ -50,6 +58,7 @@ function loadSettings() {
       if (typeof saved.holdEnabled === 'boolean') holdEnabled = saved.holdEnabled;
       if (saved.holdKey in HOLD_KEYS) holdKey = saved.holdKey;
       if (typeof saved.pairBackspace === 'boolean') pairBackspace = saved.pairBackspace;
+      if (typeof saved.editTarget   === 'boolean') editTarget   = saved.editTarget;
     }
   } catch {
     pairs = DEFAULT_PAIRS.map(p => [...p]);
@@ -57,7 +66,7 @@ function loadSettings() {
 }
 
 function saveSettings() {
-  localStorage.setItem(EXT_KEY, JSON.stringify({ pairs, holdEnabled, holdKey, pairBackspace }));
+  localStorage.setItem(EXT_KEY, JSON.stringify({ pairs, holdEnabled, holdKey, pairBackspace, editTarget }));
 }
 
 /* ── Settings UI ── */
@@ -103,10 +112,15 @@ function renderOptions(el) {
     <label class="ac-row flex-container">
       <input type="checkbox" id="ac-bksp-toggle" ${pairBackspace ? 'checked' : ''}>
       <span>Backspace inside an empty pair deletes both</span>
+    </label>
+    <label class="ac-row flex-container">
+      <input type="checkbox" id="ac-edit-toggle" ${editTarget ? 'checked' : ''}>
+      <span>Also apply in message edit textbox</span>
     </label>`;
   el.querySelector('#ac-hold-toggle').addEventListener('change', e => { holdEnabled = e.target.checked; saveSettings(); });
   el.querySelector('#ac-hold-key').addEventListener('change', e => { holdKey = e.target.value; saveSettings(); });
   el.querySelector('#ac-bksp-toggle').addEventListener('change', e => { pairBackspace = e.target.checked; saveSettings(); });
+  el.querySelector('#ac-edit-toggle').addEventListener('change', e => { editTarget = e.target.checked; saveSettings(); });
 }
 
 function renderPairRows(content) {
@@ -182,7 +196,7 @@ function onKeydownHold(e) {
   trackKeys(e);
   if (!holdEnabled || (holdKey !== 'ctrl' && holdKey !== 'alt')) return;
   const ta = e.target;
-  if (!ta || ta.id !== 'send_textarea' || e.isComposing) return;
+  if (!ta || !getTargets().has(ta.id) || e.isComposing) return;
   if (e.key.length !== 1 || e.metaKey) return;
   if (holdKey === 'ctrl' ? (!e.ctrlKey || e.altKey) : (!e.altKey || e.ctrlKey)) return; // AltGr reports Ctrl+Alt — leave it alone
   if (!pairs.some(p => p[2] && (p[0] === e.key || p[1] === e.key))) return;
@@ -195,7 +209,7 @@ function onKeydownHold(e) {
 /* ── Core handler ── */
 function onBeforeInput(e) {
   const ta = e.target;
-  if (ta.id !== 'send_textarea') return;
+  if (!getTargets().has(ta.id)) return;
   if (e.isComposing) return; // don't intercept while an IME candidate is being composed
 
   const { selectionStart: ss, selectionEnd: se, value } = ta;
